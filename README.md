@@ -1,4 +1,6 @@
 # My implementation of pintos
+This is my implementation of pintos, as a project for the course CS2043 Operating Systems at the University of Moratuwa.
+
 
 ### pintos
 Labs for undergraduate OS class (600.318) at Johns Hopkins. [Pintos](http://pintos-os.org) 
