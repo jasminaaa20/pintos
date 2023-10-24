@@ -1,0 +1,33 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug pintos",
+        "type": "cppdbg",
+        "request": "launch",
+        // "miDebuggerPath": "${workspaceFolder}/../toolchain/x86_64/bin/i386-elf-gdb",
+        "miDebuggerPath": "/usr/bin/gdb-multiarch",
+        "miDebuggerArgs": "-x ${workspaceFolder}/../toolchain/x86_64/misc/gdb-macros",
+        "program": "${workspaceFolder}/src/threads/build/kernel.o",
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}/src/threads",
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "miDebuggerServerAddress": "localhost:1234",
+      },
+
+      {
+        "name": "Debug USERPROG",
+        "type": "cppdbg",
+        "request": "launch",
+        "miDebuggerPath": "/usr/bin/gdb-multiarch",
+        "miDebuggerArgs": "-x ${workspaceFolder}/../toolchain/x86_64/misc/gdb-macros",
+        "program": "${workspaceFolder}/src/userprog/build/kernel.o",
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}/src/userprog",
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "miDebuggerServerAddress": "localhost:1234",
+      }
+    ]
+  }

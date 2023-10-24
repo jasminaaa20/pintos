@@ -5,21 +5,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <userprog/syscall.h>
+#include "lib/string.h"
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/inode.h"
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/thread.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+void argument_stack(int argc, char *argv[], void **stackpointer);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -28,38 +33,142 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy;
+  char *fn_copy=NULL, *argvs, *program=NULL;
+  struct thread_control_block *tcb=NULL;
   tid_t tid;
 
+   /* Defining process control block for child */
+  struct process_control_block *process_control_block = NULL;   
+  
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  program = palloc_get_page (0);
+  tcb = palloc_get_page(0);
 
-  /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
+  if (!tcb || !fn_copy || !program) {
+    return TID_ERROR;
+  }
+
+  strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy (program, file_name, PGSIZE);
+  program = strtok_r(program, " ",&argvs);  //TO DO
+
+  sema_init(&tcb->semaphore, 0);
+  sema_init(&tcb->wait_sema,0);
+
+  char* save_ptr;
+  strtok_r (file_name, " ", &save_ptr);
+
+  tcb->tid = NULL;
+  tcb->exiting_code = NULL;
+  tcb->argv = argvs;
+  tcb->prog = program;
+  tcb->has_exited = false;
+  tcb->is_waiting = false;
+  tcb->goa = false;
+  tcb->child = NULL;
+  tcb->parent = thread_current();
+
+  /* Initializing the memory allocate for process control block */
+  process_control_block = palloc_get_page(0);
+  process_control_block->parent_thread= thread_current();
+  process_control_block->is_waiting = false;
+  process_control_block->has_exited = false;
+  process_control_block->exiting_code = NULL;
+  process_control_block->cmd_line = fn_copy;
+
+  sema_init(&process_control_block->semaphore_wait, 0);
+
+  
+  
+  
+  
+  // tid = thread_create (program, PRI_DEFAULT, start_process, tcb);
+  // sema_down(&tcb->sema); //wait until load and push argv to stack
+  
+  // if(tcb->tid == tid)
+  // {
+  //   list_push_back(&thread_current()->child_tcb, &tcb->elem);
+  // }
+  // else
+  // {
+  //   goto end;
+  // }
+  // if(fn_copy && program)
+  // {
+  //   palloc_free_page(fn_copy);
+  //   palloc_free_page(program);
+  // }
+  // return tid;
+  
+  // end:    
+  // palloc_free_page(fn_copy);
+  // palloc_free_page(program);
+  // palloc_free_page(tcb);
+  // return -1;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, process_control_block);
+  if (tid == TID_ERROR){
+    palloc_free_page(process_control_block);
     palloc_free_page (fn_copy); 
-  return tid;
+
+  }
+  else{
+    list_push_back(&(thread_current()->child_thread_list), &(process_control_block->elem));
+  }
+  process_control_block->pid = tid;
+  return process_control_block->pid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *pcb_)
 {
-  char *file_name = file_name_;
+  struct process_control_block* process_control_block = pcb_;
+  char *file_name = process_control_block->cmd_line;
   struct intr_frame if_;
   bool success;
+
+  /* Get the program name from the command line passed */
+  char *file, *save_ptr;
+  file = strtok_r(file_name, " ", &save_ptr);
+
+  /* parse arguments */
+  int8_t argc = 0;
+  char **argv [100];
+  argv[argc++] = file;
+  char *token;
+  for (token = strtok_r(NULL, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr))
+  {
+    argv[argc++] = token;
+  }
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  success = load (file, &if_.eip, &if_.esp);
+
+  argument_stack(argc, argv, &if_.esp);
+  
+   /* Assign PCB to thread */
+  struct thread *t = thread_current();
+  process_control_block->pid = success ? (pid_t)(t->tid) : PID_ERROR;
+  t->process_control_block = process_control_block;
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
@@ -76,6 +185,160 @@ start_process (void *file_name_)
   NOT_REACHED ();
 }
 
+/* function to setup the argument stack for user process
+  argc - argument count
+  argv - array of strings containig arguments
+  esp - pointer to the stack of the user process */
+void argument_stack(int argc, char *argv[], void **esp)
+{
+  /* argc cannot be < 0 */
+  ASSERT(argc >= 0);
+
+  /* placing the argv to the process stack.
+    Start with bottom of the stack
+    So, should place argv's in reverse order */
+  int i;
+  int len = 0;
+  void *argv_addr[argc]; // keep track of addresses of arguments placed in stack
+  for (i = argc - 1; i >= 0; i--)
+  {
+    len = strlen(argv[i]) + 1; // length of the string with the null char
+    *esp -= len;
+    memcpy(*esp, argv[i], len);
+    argv_addr[i] = *esp;
+  }
+
+  // leaving sentinel / word align to seperate argv's from addresses
+  *esp = (void *)((int)*esp & 0xfffffffc);
+
+  // null address at the end of the addresses
+  *esp -= 4;
+  *((int *)*esp) = 0;
+
+  // stacking argv_addresses
+  for (i = argc - 1; i >= 0; i--)
+  {
+    *esp -= 4;
+    *((void **)*esp) = argv_addr[i];
+  }
+
+  // argv_addr
+  *esp -= 4;
+  *((void **)*esp) = (*esp + 4);
+
+  // stacking argc
+  *esp -= 4;
+  *((int *)*esp) = argc;
+
+  // fake return address
+  *esp -= 4;
+  *((int *)*esp) = 0;
+}
+
+
+
+
+
+
+// static void
+// start_process (void *pcb_)
+// {
+//   struct thread_control_block *tcb = pcb_;
+//   void **esp=NULL;
+//   char *file_name = tcb->prog;
+//   char *argv = tcb->argv;
+//   struct intr_frame if_;
+//   bool success;
+//   unsigned stack_size=0;
+//   unsigned char * argv_ptr;
+//   unsigned cnt=0;
+
+//   thread_current()->tcb = pcb_;
+//   tcb->me = thread_current();
+  
+//   /* Initialize interrupt frame and load executable. */
+//   memset (&if_, 0, sizeof if_);
+//   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
+//   if_.cs = SEL_UCSEG;
+//   if_.eflags = FLAG_IF | FLAG_MBS;
+//   success = load (file_name, &if_.eip, &if_.esp);
+//   if (success) // push argv to stack
+//   { 
+//     char *tmp;
+//     char *save;
+//     char **token = (const char **)palloc_get_page(0);
+//     int i;
+//     tcb->tid = thread_current()->tid;       
+//     esp = &if_.esp;
+
+//     if(strlen(argv) != 0)
+//     {
+//       int argc=0;
+//       for(tmp = strtok_r(argv," ",&save); tmp != NULL; tmp = strtok_r(NULL, " ",&save))
+//       {
+//         if(tmp[0] != ' ')
+//         {
+//           token[argc++] = tmp;
+//         }
+//       }
+//       for(i=0; i<argc; i++)
+//       {
+//         *esp -= strlen((const char*)token[argc-1-i])+1;
+//         stack_size += strlen((const char*)token[argc-1-i])+1;
+//         memcpy(*esp, (void *)token[argc-1-i], strlen((const char*)token[argc-1-i])+1);
+//       }
+//       palloc_free_page(token); // 이거 못찾아서 vm 통과 못했...
+//     }
+//     *esp -= strlen(thread_current()->name)+1; 
+//     stack_size += strlen(thread_current()->name) +1;
+//     memcpy(*esp, thread_current()->name, strlen(thread_current()->name)+1);
+//     argv_ptr = PHYS_BASE-2;
+//     *esp -= 4 - stack_size % 4;
+//     *esp -= 4;
+//     *(unsigned int*)*esp = (unsigned int)NULL;
+//     int argc=0;
+//     for(cnt = 0 ; cnt <= stack_size-1 ; cnt++) // make argv split, and push argv's addr
+//     {
+//       if((*(argv_ptr-cnt) == '\0' || *(argv_ptr-cnt)== ' ') &&
+//          (*(argv_ptr-cnt+1) != '\0' || *(argv_ptr-cnt+1)!= ' '))
+//       {
+//           argc++;
+//           *esp -= 4;
+//           *(unsigned int *)*esp = (unsigned int)(argv_ptr-cnt+1);
+//       }
+//     }
+//     *esp -=4;
+//     *(unsigned int *)*esp = (unsigned int)*esp+4; // addr of argv[0]'s addr
+//     *esp -=4;
+//     *(unsigned int *)*esp = (unsigned int)argc; // push argc
+//     *esp -=4;
+//     *(unsigned int *)*esp = (unsigned int)0x0;
+//   }
+//   sema_up(&(tcb->sema));
+
+//   /*If load failed, quit.*/
+//   if (!success) 
+//   {
+//     sys_exit(-1,NULL);
+//   }
+//   /* Start the user process by simulating a return from an
+//      interrupt, implemented by intr_exit (in
+//      threads/intr-stubs.S).  Because intr_exit takes all of its
+//      arguments on the stack in the form of a `struct intr_frame',
+//      we just point the stack pointer (%esp) to our stack frame
+//      and jump to it. */
+//   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
+//   NOT_REACHED ();
+// }
+
+
+
+
+
+
+
+
+
 /* Waits for thread TID to die and returns its exit status.  If
    it was terminated by the kernel (i.e. killed due to an
    exception), returns -1.  If TID is invalid or if it was not a
@@ -88,8 +351,121 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
+  struct thread *t = thread_current();
+  struct list *child_thread_list = &(t->child_thread_list);
+
+  /*Finding all child processes using tid*/
+  struct list_elem *child_elem = NULL;
+  struct process_control_block *child_pctrl = NULL;
+
+  if (!list_empty(child_thread_list))
+  {
+    for (child_elem = list_front(child_thread_list); child_elem != list_end(child_thread_list); child_elem = list_next(child_elem))
+    {
+      struct process_control_block *process_control_block = list_entry(
+          child_elem, struct process_control_block, elem);
+
+      if (process_control_block->pid == child_tid)
+      { 
+        /*Finding the child*/
+        child_pctrl = process_control_block;
+        break;
+      }
+    }
+  }
+
+  /*If child tid is Null*/
+  if (child_pctrl == NULL)
+  {
+    return -1;
+  }
+
+  /*If child process block is waiting*/
+  if (child_pctrl->is_waiting)
+  {
+    return -1; 
+  }
+  else
+  {
+    child_pctrl->is_waiting = true;
+  }
+
+  /*Blocking the process till the child process exit*/
+  if (!child_pctrl->has_exited)
+  {
+    sema_down(&(child_pctrl->semaphore_wait));
+  }
+  ASSERT(child_pctrl->has_exited == true);
+
+  // remove from child_thread_list
+  ASSERT(child_elem != NULL);
+  list_remove(child_elem);
+
+  int exiting_code = child_pctrl->exiting_code;
+
+  /*free the child contol process block*/
+  palloc_free_page(child_pctrl);
+
+  return exiting_code;
 }
+
+
+
+
+
+
+// int
+// process_wait (tid_t child_tid) 
+// {
+//   struct thread * curr = thread_current();
+//   struct tcb *tcb=NULL;
+//   struct list_elem *tmp=NULL;
+//   int exit_code;
+//   /* first, find child tcb*/
+//   if(!list_empty(&curr->child_tcb))
+//   {
+//     for(tmp = list_front(&curr->child_tcb); ; tmp = list_next(tmp))
+//     {
+//       tcb = list_entry(tmp, struct tcb, elem);
+//       if(tcb->tid == child_tid)
+//         break; //find.
+//       if(tmp == list_end(&curr->child_tcb))
+//       { 
+//         if(tcb->tid != child_tid)
+//         {
+//           printf("CANNOT find child process!\n");
+//           return -1;
+//         }
+//         else 
+//           break;
+//       }
+//     }
+//   }
+//   if(tmp==NULL)
+//   {
+//     return -1;
+//   }
+//   if(tcb->wait==true)
+//   {
+//     printf("ERROR! child process has been waiting!\n");
+//     return -1;
+//   }
+//   else
+//     tcb->wait = true;
+//   sema_down(&(tcb->wait_sema)); //wait parent process in process_wait
+//   /* now child process has been exited */
+//   list_remove(tmp);
+//   exit_code = tcb->exit_code;
+//   palloc_free_page(tcb);
+//   return exit_code;
+// }
+
+
+
+
+
+
+
 
 /* Free the current process's resources. */
 void
@@ -97,6 +473,26 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  /*free all child process control blocks*/
+  struct list *child_thread_list = &cur->child_thread_list;
+  while (!list_empty(child_thread_list))
+  {
+    struct list_elem *e = list_pop_front(child_thread_list);
+    struct process_control_block *process_control_block;
+    process_control_block = list_entry(e, struct process_control_block, elem);
+    if (process_control_block->has_exited)
+    {
+      palloc_free_page(process_control_block);
+    }
+    else
+    {
+      process_control_block->parent_thread = NULL;
+    }
+  }
+
+  cur->process_control_block->has_exited = true;
+  sema_up(&cur->process_control_block->semaphore_wait);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -115,6 +511,83 @@ process_exit (void)
       pagedir_destroy (pd);
     }
 }
+
+
+
+
+
+
+// void
+// process_exit (void)
+// {
+//   struct thread *cur = thread_current ();
+//   struct tcb * tcb;
+//   struct filedescriptor *fd;
+//   uint32_t *pd;
+
+//   struct list *list = &cur->child_tcb;
+//   for(;!list_empty(list);)
+//   {
+//     struct list_elem *elem = list_pop_front (list) ;
+//     tcb = list_entry(elem, struct tcb, elem);
+//     if(tcb->exit == true)
+//     {
+//       palloc_free_page(tcb);
+//     }
+//     else
+//     {
+//       tcb->goa=true;
+//       tcb->parent=NULL;
+//     } 
+//   }
+//   struct list *list_ = &cur->fd;
+//   for(;!list_empty(list_);)
+//   {
+//     struct list_elem *elem = list_pop_front (list_);
+//     fd = list_entry(elem, struct filedescriptor, elem);
+//     file_close(fd->f);
+//     palloc_free_page(fd); 
+//   }
+//   if(cur->current_file)
+//   {
+//     file_allow_write(cur->current_file);
+//     file_close(cur->current_file);
+//   }
+  
+//   /* wake up parent process */
+//   cur->tcb->exit = true;
+//   sema_up(&(cur->tcb->wait_sema));
+  
+//   /*and remove itself if cur thread is orphan */
+//   if(cur->tcb->goa == true)
+//   {
+//     palloc_free_page(cur->tcb);
+//   }
+//   /* Destroy the current process's page directory and switch back
+//      to the kernel-only page directory. */
+//   pd = cur->pagedir;
+//   if (pd != NULL) 
+//   {
+//     /* Correct ordering here is crucial.  We must set
+//        cur->pagedir to NULL before switching page directories,
+//        so that a timer interrupt can't switch back to the
+//        process page directory.  We must activate the base page
+//        directory before destroying the process's page
+//        directory, or our active page directory will be one
+//        that's been freed (and cleared). */
+//     cur->pagedir = NULL;
+//     pagedir_activate (NULL);
+//     pagedir_destroy (pd);
+//   }
+// }
+
+
+
+
+
+
+
+
 
 /* Sets up the CPU for running user code in the current
    thread.

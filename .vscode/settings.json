@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "DESIGNDOC": "plaintext",
+        "syscall-nr.h": "c",
+        "process.h": "c"
+    }
+}

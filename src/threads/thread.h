@@ -4,6 +4,8 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
+#include "filesys/file.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -80,6 +82,31 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
+
+struct thread_control_block
+{
+   tid_t tid;
+   char * argv;
+   char * prog;
+   int exiting_code;
+   bool is_waiting;
+   bool has_exited;
+   bool goa;
+   struct thread * child;
+   struct thread * parent;
+   struct semaphore semaphore;
+   struct semaphore wait_sema;
+   struct list_elem elem;
+};
+
+struct filedescriptor
+{
+   int fd_num;
+   struct file * f;
+   struct thread * master;
+   struct list_elem elem;
+};
+
 struct thread
   {
     /* Owned by thread.c. */
@@ -89,13 +116,17 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
-
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    struct list child_thread_list;               /* maintain child threads */
+    struct process_control_block* process_control_block;       /*process control block*/
+    struct list file_details;       /*maintain file details*/  
+    struct thread_control_block *tcb;
+    struct file * current_file;
 #endif
 
     /* Owned by thread.c. */
